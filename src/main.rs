@@ -9,16 +9,16 @@ use std::slice::Iter;
 use crate::lib::*;
 
 const USAGE_E: &str = r#"
-Encrypts a file. If -c is not provided, the entire file is encrypted as a
-single block of minimal size.
+  Encrypts a file. If -c is not provided, the entire file is encrypted as a
+  single chunk of minimal size.
 
-Options:
+  Options:
     -c chunk_len    write chunks of this many bytes
     -o out_path     write to this directory
 "#;
 
 const USAGE_D: &str = r#"
-Decrypt a file. The keys JSON will be read from the standard input.
+  Decrypt a file. The keys JSON will be read from the standard input.
 "#;
 
 enum Params {
@@ -106,10 +106,10 @@ fn parse_e_args(mut args: Iter<String>) -> Result<EncryptParams> {
             (Some("-c"), Some(chunk_len_str)) => {
                 let chunk_len_parsed = chunk_len_str.parse::<usize>()?;
                 if chunk_len_parsed == 0 {
-                    return Err(anyhow!("Chunk length must not be zero"));
+                    return Err(anyhow!("chunk length must not be zero"));
                 }
                 if chunk_len_parsed % 16 != 0 {
-                    return Err(anyhow!("Chunk length must be a multiple of 16"));
+                    return Err(anyhow!("chunk length must be a multiple of 16"));
                 }
                 chunk_len = Some(chunk_len_parsed);
             },
@@ -155,12 +155,12 @@ fn program_name() -> String {
 }
 
 fn usage() -> String {
-    format!("Usage: {} (e | d) <path_in> [options]", program_name())
+    format!("\n  Usage: {} (e | d) <path_in> [options]\n", program_name())
 }
 
 fn usage_e() -> String {
     format!(
-        "Usage: {} e <path_in> [options]\n{}",
+        "\n  Usage: {} e <path_in> [options]\n{}",
         program_name(),
         USAGE_E,
     )
@@ -168,7 +168,7 @@ fn usage_e() -> String {
 
 fn usage_d() -> String {
     format!(
-        "Usage: {} d <path_in> <path_out>\n{}",
+        "\n  Usage: {} d <path_in> <path_out>\n{}",
         program_name(),
         USAGE_D,
     )

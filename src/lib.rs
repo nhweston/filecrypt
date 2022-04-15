@@ -48,7 +48,7 @@ pub fn encrypt_file(
     for thread in threads {
         thread.join().unwrap();
     }
-    Metadata::new(file_len, chunk_len, chunks)
+    Metadata { file_len, chunk_len, chunks }
 }
 
 pub fn encrypt_file_unchunked(
@@ -82,8 +82,10 @@ pub fn decrypt_file(
     path_out: &Path,
     metadata: &Metadata,
 ) {
-    let mut file = OpenOptions::new().create(true).write(true).open(path_out).unwrap();
     let Metadata { file_len, chunk_len, chunks } = metadata;
+    check_chunk_len(*chunk_len);
+    check_num_chunks(*file_len, *chunk_len, chunks.len());
+    let mut file = OpenOptions::new().create(true).write(true).open(path_out).unwrap();
     let mut threads = Vec::new();
     for chunk in chunks {
         let chunk = chunk.clone();
@@ -115,9 +117,9 @@ fn check_chunk_len(chunk_len: usize) {
     assert_eq!(chunk_len % 16, 0, "chunk_len must be a multiple of 16");
 }
 
-fn check_num_chunks(file_len: usize, chunk_len: usize, num_keys: usize) {
+fn check_num_chunks(file_len: usize, chunk_len: usize, num_chunks: usize) {
     let expected = (file_len + chunk_len - 16) / (chunk_len - 16);
-    assert_eq!(num_keys, expected, "expected {} chunks, found {}", expected, num_keys);
+    assert_eq!(num_chunks, expected, "expected {} chunks, found {}", expected, num_chunks);
 }
 
 #[derive(Deserialize, Serialize)]
@@ -125,20 +127,6 @@ pub struct Metadata {
     file_len: usize,
     chunk_len: usize,
     chunks: Vec<Chunk>,
-}
-
-impl Metadata {
-
-    pub fn new(
-        file_len: usize,
-        chunk_len: usize,
-        chunks: Vec<Chunk>,
-    ) -> Self {
-        check_chunk_len(chunk_len);
-        check_num_chunks(file_len, chunk_len, chunks.len());
-        Metadata { chunk_len, file_len, chunks }
-    }
-
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -215,9 +203,9 @@ impl TryFrom<ChunkIntermediate> for Chunk {
     type Error = &'static str;
 
     fn try_from(intermediate: ChunkIntermediate) -> Result<Self, Self::Error> {
-        let id = Uuid::parse_str(&intermediate.id).map_err(|_| "Malformed ID")?;
+        let id = Uuid::parse_str(&intermediate.id).map_err(|_| "malformed ID")?;
         let key = {
-            let bytes = base64::decode(&intermediate.key).map_err(|_| "Malformed key")?;
+            let bytes = base64::decode(&intermediate.key).map_err(|_| "malformed key")?;
             *Key::from_slice(&bytes)
         };
         Ok(Chunk { id, key })
