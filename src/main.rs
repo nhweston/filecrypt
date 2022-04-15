@@ -1,12 +1,10 @@
 mod lib;
 
-use aes_gcm::Key;
 use anyhow::{anyhow, Result};
-use base64;
-use std::env;
+use std::{env, io};
+use std::io::Read;
 use std::path::Path;
 use std::slice::Iter;
-use uuid::Uuid;
 
 use crate::lib::*;
 
@@ -20,8 +18,7 @@ Options:
 "#;
 
 const USAGE_D: &str = r#"
-Decrypt a file. Each chunk should be specified as its filename followed by its
-key (in base 64), separated by a colon.
+Decrypt a file. The keys JSON will be read from the standard input.
 "#;
 
 enum Params {
@@ -38,8 +35,7 @@ struct EncryptParams {
 struct DecryptParams {
     path_in: String,
     path_out: String,
-    file_len: usize,
-    chunks: Vec<Chunk>,
+    metadata: Metadata,
 }
 
 fn main() {
@@ -69,11 +65,9 @@ fn run() -> Result<()> {
             Ok(())
         },
         Params::Decrypt(params) => {
-            let DecryptParams { path_in, path_out, file_len, chunks } = params;
+            let DecryptParams { path_in, path_out, metadata } = params;
             let path_in = Path::new(&path_in);
             let path_out = Path::new(&path_out);
-            let chunk_len = path_in.join(chunks[0].id_string()).metadata()?.len();
-            let metadata = Metadata::new(file_len, chunk_len as usize, chunks);
             decrypt_file(path_in, path_out, &metadata);
             Ok(())
         },
@@ -141,7 +135,6 @@ fn parse_d_args(mut args: Iter<String>) -> Result<DecryptParams> {
                 return Err(anyhow!(usage_d()));
             },
         };
-    let mut chunks = Vec::new();
     let path_out =
         match args.next() {
             Some(path_out) => path_out.to_string(),
@@ -149,45 +142,12 @@ fn parse_d_args(mut args: Iter<String>) -> Result<DecryptParams> {
                 return Err(anyhow!(usage_d()));
             },
         };
-    let file_len =
-        match args.next() {
-            Some(file_len_str) => file_len_str.parse::<usize>()?,
-            None => {
-                return Err(anyhow!(usage_d()));
-            },
-        };
-        const MSG: &str = "Malformed chunk specifier";
-    loop {
-        match args.next() {
-            Some(arg) => {
-                if arg.starts_with('-') {
-                    break;
-                }
-                let split: Vec<&str> = arg.split(':').collect();
-                if split.len() != 2 {
-                    return Err(anyhow!(MSG));
-                }
-                let id = {
-                    let string = split[0];
-                    Uuid::parse_str(string).map_err(|_| anyhow!(MSG))?
-                };
-                let key = {
-                    let string = split[1];
-                    let bytes = base64::decode(string).map_err(|_| anyhow!(MSG))?;
-                    *Key::from_slice(&bytes)
-                };
-                let chunk = Chunk::new(id, key);
-                chunks.push(chunk);
-            },
-            None => {
-                break;
-            },
-        }
-    }
-    if chunks.is_empty() {
-        return Err(anyhow!("No chunks specified"));
-    }
-    Ok(DecryptParams { path_in, path_out, file_len, chunks })
+    let mut buffer = Vec::new();
+    let mut stdin = io::stdin();
+    stdin.read_to_end(&mut buffer)?;
+    let text = String::from_utf8(buffer)?;
+    let metadata = serde_json::from_str(&text)?;
+    Ok(DecryptParams { path_in, path_out, metadata })
 }
 
 fn program_name() -> String {
@@ -208,7 +168,7 @@ fn usage_e() -> String {
 
 fn usage_d() -> String {
     format!(
-        "Usage: {} d <path_in> <path_out> <file_len> (<chunk> ...)\n{}",
+        "Usage: {} d <path_in> <path_out>\n{}",
         program_name(),
         USAGE_D,
     )

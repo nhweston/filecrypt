@@ -15,9 +15,6 @@ pub fn encrypt_file(
     path_out: &Path,
     chunk_len: usize,
 ) -> Metadata {
-    println!("path_in = {}", path_in.display());
-    println!("path_out = {}", path_out.display());
-    println!("path in = {}", chunk_len);
     check_chunk_len(chunk_len);
     let mut file = File::open(path_in).unwrap();
     let mut file_len = 0;
@@ -27,7 +24,6 @@ pub fn encrypt_file(
     loop {
         let mut buffer = Vec::with_capacity(chunk_len);
         let num_bytes = (&mut file).take(chunk_len as u64).read_to_end(&mut buffer).unwrap();
-        println!("read {} bytes", num_bytes);
         if num_bytes == 0 {
             break;
         }
@@ -153,10 +149,6 @@ pub struct Chunk {
 }
 
 impl Chunk {
-
-    pub fn new(id: Uuid, key: Key<U16>) -> Self {
-        Chunk { id, key }
-    }
 
     pub fn random() -> Self {
         let mut rng = OsRng::new().unwrap();
