@@ -64,14 +64,15 @@ fn run() -> Result<()> {
                     Some(chunk_len) => encrypt_file(path_in, path_out, chunk_len),
                     None => encrypt_file_unchunked(path_in, path_out),
                 };
-            println!("{}", metadata.to_string());
+            let json = serde_json::to_string(&metadata)?;
+            println!("{}", json);
             Ok(())
         },
         Params::Decrypt(params) => {
             let DecryptParams { path_in, path_out, file_len, chunks } = params;
             let path_in = Path::new(&path_in);
             let path_out = Path::new(&path_out);
-            let chunk_len = path_in.join(chunks[0].filename()).metadata()?.len();
+            let chunk_len = path_in.join(chunks[0].id_string()).metadata()?.len();
             let metadata = Metadata::new(file_len, chunk_len as usize, chunks);
             decrypt_file(path_in, path_out, &metadata);
             Ok(())

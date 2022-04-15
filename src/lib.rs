@@ -3,6 +3,7 @@ use aes_gcm::aead::NewAead;
 use base64;
 use generic_array::typenum::{U12, U16};
 use rand::{RngCore, OsRng};
+use serde::{Deserialize, Serialize};
 use std::{fs, thread};
 use std::fs::{File, OpenOptions};
 use std::io::prelude::{Read, Write};
@@ -36,7 +37,7 @@ pub fn encrypt_file(
         file_len += num_bytes;
         let (chunk, path) = {
             let chunk = Chunk::random();
-            let path = path_out.join(chunk.filename());
+            let path = path_out.join(chunk.id_string());
             let clone = chunk.clone();
             chunks.push(chunk);
             (clone, path)
@@ -63,7 +64,7 @@ pub fn encrypt_file_unchunked(
     let file_len = (&mut file_in).read_to_end(&mut buffer).unwrap();
     let chunk = Chunk::random();
     fs::create_dir_all(path_out).unwrap();
-    let path = path_out.join(chunk.filename());
+    let path = path_out.join(chunk.id_string());
     let num_padding_bytes = if file_len % 16 == 0 { 0 } else { 16 - file_len % 16 };
     for _ in 0..num_padding_bytes {
         buffer.push(0);
@@ -90,7 +91,7 @@ pub fn decrypt_file(
     let mut threads = Vec::new();
     for chunk in chunks {
         let chunk = chunk.clone();
-        let path = path_in.join(chunk.filename());
+        let path = path_in.join(chunk.id_string());
         let mut buffer = Vec::with_capacity(*chunk_len);
         let thread = thread::spawn(move || {
             let mut file = File::open(path).unwrap();
@@ -123,6 +124,7 @@ fn check_num_chunks(file_len: usize, chunk_len: usize, num_keys: usize) {
     assert_eq!(num_keys, expected, "expected {} chunks, found {}", expected, num_keys);
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct Metadata {
     file_len: usize,
     chunk_len: usize,
@@ -141,21 +143,10 @@ impl Metadata {
         Metadata { chunk_len, file_len, chunks }
     }
 
-    pub fn to_string(&self) -> String {
-        let mut string = String::new();
-        string.push_str(&format!("FILE_LEN {}\n", self.file_len));
-        string.push_str(&format!("CHUNK_LEN {}\n", self.chunk_len));
-        for i in 0..self.chunks.len() {
-            let chunk = &self.chunks[i];
-            let key_string = base64::encode(chunk.key.as_slice());
-            string.push_str(&format!("CHUNK {}:{}\n", chunk.filename(), key_string));
-        }
-        string
-    }
-
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(into = "ChunkIntermediate", try_from = "ChunkIntermediate")]
 pub struct Chunk {
     id: Uuid,
     key: Key<U16>,
@@ -182,10 +173,14 @@ impl Chunk {
         Self { id, key }
     }
 
-    pub fn filename(&self) -> String {
+    pub fn id_string(&self) -> String {
         let mut result = self.id.simple().to_string();
         result.make_ascii_lowercase();
         result
+    }
+
+    pub fn key_string(&self) -> String {
+        base64::encode(self.key.as_slice()).to_string()
     }
 
     pub fn nonce(&self) -> Nonce<U12> {
@@ -202,6 +197,38 @@ impl Chunk {
     pub fn decrypt(&self, buffer: &mut Vec<u8>) {
         let cipher = Aes128Gcm::new(&self.key);
         cipher.decrypt_in_place(&self.nonce(), &[], buffer).unwrap();
+    }
+
+}
+
+#[derive(Deserialize, Serialize)]
+struct ChunkIntermediate {
+    id: String,
+    key: String,
+}
+
+impl From<Chunk> for ChunkIntermediate {
+
+    fn from(chunk: Chunk) -> Self {
+        ChunkIntermediate {
+            id: chunk.id_string(),
+            key: chunk.key_string(),
+        }
+    }
+
+}
+
+impl TryFrom<ChunkIntermediate> for Chunk {
+
+    type Error = &'static str;
+
+    fn try_from(intermediate: ChunkIntermediate) -> Result<Self, Self::Error> {
+        let id = Uuid::parse_str(&intermediate.id).map_err(|_| "Malformed ID")?;
+        let key = {
+            let bytes = base64::decode(&intermediate.key).map_err(|_| "Malformed key")?;
+            *Key::from_slice(&bytes)
+        };
+        Ok(Chunk { id, key })
     }
 
 }
