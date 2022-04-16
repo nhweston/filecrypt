@@ -1,10 +1,12 @@
-use aes_gcm::{Aes128Gcm, AeadInPlace, Key, Nonce};
+use aes_gcm::{AeadInPlace, Aes128Gcm, Key, Nonce};
 use aes_gcm::aead::NewAead;
+use anyhow::{anyhow, Result};
 use base64;
 use generic_array::typenum::{U12, U16};
 use rand::{RngCore, OsRng};
 use serde::{Deserialize, Serialize};
 use std::{fs, thread};
+use std::thread::JoinHandle;
 use std::fs::{File, OpenOptions};
 use std::io::prelude::{Read, Write};
 use std::path::Path;
@@ -14,16 +16,19 @@ pub fn encrypt_file(
     path_in: &Path,
     path_out: &Path,
     chunk_len: usize,
-) -> Metadata {
-    check_chunk_len(chunk_len);
-    let mut file = File::open(path_in).unwrap();
+) -> Result<Metadata> {
+    check_chunk_len(chunk_len)?;
+    let mut file = File::open(path_in)?;
     let mut file_len = 0;
     let mut chunks = Vec::new();
     let mut threads = Vec::new();
-    fs::create_dir_all(path_out).unwrap();
+    fs::create_dir_all(path_out)?;
     loop {
         let mut buffer = Vec::with_capacity(chunk_len);
-        let num_bytes = (&mut file).take(chunk_len as u64).read_to_end(&mut buffer).unwrap();
+        let num_bytes =
+            (&mut file)
+                .take(chunk_len as u64)
+                .read_to_end(&mut buffer)?;
         if num_bytes == 0 {
             break;
         }
@@ -38,88 +43,117 @@ pub fn encrypt_file(
             chunks.push(chunk);
             (clone, path)
         };
-        let thread = thread::spawn(move || {
-            chunk.encrypt(&mut buffer);
-            let mut file = OpenOptions::new().create(true).write(true).open(path).unwrap();
-            file.write_all(buffer.as_slice()).unwrap();
-        });
+        let mut file =
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(path)?;
+        let thread: JoinHandle<Result<()>> =
+            thread::spawn(move || {
+                chunk.encrypt(&mut buffer);
+                file.write_all(buffer.as_slice())?;
+                Ok(())
+            });
         threads.push(thread);
     }
     for thread in threads {
-        thread.join().unwrap();
+        thread.join().unwrap()?;
     }
-    Metadata { file_len, chunk_len, chunks }
+    Ok(Metadata { file_len, chunk_len, chunks })
 }
 
 pub fn encrypt_file_unchunked(
     path_in: &Path,
     path_out: &Path,
-) -> Metadata {
-    let mut file_in = File::open(path_in).unwrap();
+) -> Result<Metadata> {
+    let mut file_in = File::open(path_in)?;
     let mut buffer = Vec::new();
-    let file_len = (&mut file_in).read_to_end(&mut buffer).unwrap();
+    let file_len = (&mut file_in).read_to_end(&mut buffer)?;
     let chunk = Chunk::random();
-    fs::create_dir_all(path_out).unwrap();
+    fs::create_dir_all(path_out)?;
     let path = path_out.join(chunk.id_string());
-    let num_padding_bytes = if file_len % 16 == 0 { 0 } else { 16 - file_len % 16 };
+    let num_padding_bytes =
+        if file_len % 16 == 0 { 0 }
+        else { 16 - file_len % 16 };
     for _ in 0..num_padding_bytes {
         buffer.push(0);
     }
     let chunk_len = buffer.len() + 16;
     buffer.reserve(chunk_len - buffer.len());
     chunk.encrypt(&mut buffer);
-    let mut file_out = OpenOptions::new().create(true).write(true).open(path).unwrap();
-    file_out.write_all(buffer.as_slice()).unwrap();
-    Metadata {
+    let mut file_out =
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(path)?;
+    file_out.write_all(buffer.as_slice())?;
+    Ok(Metadata {
         file_len,
         chunk_len,
         chunks: vec![chunk],
-    }
+    })
 }
 
 pub fn decrypt_file(
     path_in: &Path,
     path_out: &Path,
     metadata: &Metadata,
-) {
+) -> Result<()> {
     let Metadata { file_len, chunk_len, chunks } = metadata;
-    check_chunk_len(*chunk_len);
-    check_num_chunks(*file_len, *chunk_len, chunks.len());
-    let mut file = OpenOptions::new().create(true).write(true).open(path_out).unwrap();
+    check_chunk_len(*chunk_len)?;
+    check_num_chunks(*file_len, *chunk_len, chunks.len())?;
+    let mut file =
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(path_out)?;
     let mut threads = Vec::new();
     for chunk in chunks {
         let chunk = chunk.clone();
         let path = path_in.join(chunk.id_string());
         let mut buffer = Vec::with_capacity(*chunk_len);
-        let thread = thread::spawn(move || {
-            let mut file = File::open(path).unwrap();
-            file.read_to_end(&mut buffer).unwrap();
-            chunk.decrypt(&mut buffer);
-            buffer
-        });
+        let thread: JoinHandle<Result<Vec<u8>>> = 
+            thread::spawn(move || {
+                let mut file = File::open(path)?;
+                file.read_to_end(&mut buffer)?;
+                chunk.decrypt(&mut buffer);
+                Ok(buffer)
+            });
         threads.push(thread);
     }
     let last_len = {
         let remainder = *file_len % *chunk_len;
-        if remainder == 0 { *chunk_len } else { remainder }
+        if remainder == 0 { *chunk_len }
+        else { remainder }
     };
     let mut i = 0;
     let last_idx = threads.len() - 1;
     for thread in threads {
-        let data = thread.join().unwrap();
-        let slice = if i < last_idx { &data[..] } else { &data[..last_len] };
-        file.write_all(slice).unwrap();
+        let data = thread.join().unwrap()?;
+        let slice =
+            if i < last_idx { &data[..] }
+            else { &data[..last_len] };
+        file.write_all(slice)?;
         i += 1;
     }
+    Ok(())
 }
 
-fn check_chunk_len(chunk_len: usize) {
-    assert_eq!(chunk_len % 16, 0, "chunk_len must be a multiple of 16");
+fn check_chunk_len(chunk_len: usize) -> Result<()> {
+    if chunk_len % 16 == 0 { Ok(()) }
+    else { Err(anyhow!("chunk_len must be a multiple of 16")) }
 }
 
-fn check_num_chunks(file_len: usize, chunk_len: usize, num_chunks: usize) {
+fn check_num_chunks(
+    file_len: usize,
+    chunk_len: usize,
+    num_chunks: usize,
+) -> Result<()> {
     let expected = (file_len + chunk_len - 16) / (chunk_len - 16);
-    assert_eq!(num_chunks, expected, "expected {} chunks, found {}", expected, num_chunks);
+    if num_chunks != expected {
+        Err(anyhow!("expected {} chunks, found {}", expected, num_chunks))
+    }
+    else { Ok(())}
 }
 
 #[derive(Deserialize, Serialize)]
@@ -202,10 +236,10 @@ impl TryFrom<ChunkIntermediate> for Chunk {
 
     type Error = &'static str;
 
-    fn try_from(intermediate: ChunkIntermediate) -> Result<Self, Self::Error> {
-        let id = Uuid::parse_str(&intermediate.id).map_err(|_| "malformed ID")?;
+    fn try_from(ci: ChunkIntermediate) -> Result<Self, Self::Error> {
+        let id = Uuid::parse_str(&ci.id).map_err(|_| "malformed ID")?;
         let key = {
-            let bytes = base64::decode(&intermediate.key).map_err(|_| "malformed key")?;
+            let bytes = base64::decode(&ci.key).map_err(|_| "malformed key")?;
             *Key::from_slice(&bytes)
         };
         Ok(Chunk { id, key })

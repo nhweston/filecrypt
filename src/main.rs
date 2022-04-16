@@ -57,8 +57,10 @@ fn run() -> Result<()> {
             let path_out = Path::new(&path_out);
             let metadata =
                 match chunk_len {
-                    Some(chunk_len) => encrypt_file(path_in, path_out, chunk_len),
-                    None => encrypt_file_unchunked(path_in, path_out),
+                    Some(chunk_len) =>
+                        encrypt_file(path_in, path_out, chunk_len)?,
+                    None =>
+                        encrypt_file_unchunked(path_in, path_out)?,
                 };
             let json = serde_json::to_string(&metadata)?;
             println!("{}", json);
@@ -68,7 +70,7 @@ fn run() -> Result<()> {
             let DecryptParams { path_in, path_out, metadata } = params;
             let path_in = Path::new(&path_in);
             let path_out = Path::new(&path_out);
-            decrypt_file(path_in, path_out, &metadata);
+            decrypt_file(path_in, path_out, &metadata)?;
             Ok(())
         },
     }
@@ -106,10 +108,12 @@ fn parse_e_args(mut args: Iter<String>) -> Result<EncryptParams> {
             (Some("-c"), Some(chunk_len_str)) => {
                 let chunk_len_parsed = chunk_len_str.parse::<usize>()?;
                 if chunk_len_parsed == 0 {
-                    return Err(anyhow!("chunk length must not be zero"));
+                    let msg = "chunk length must not be zero";
+                    return Err(anyhow!(msg));
                 }
                 if chunk_len_parsed % 16 != 0 {
-                    return Err(anyhow!("chunk length must be a multiple of 16"));
+                    let msg = "chunk length must be a multiple of 16";
+                    return Err(anyhow!(msg));
                 }
                 chunk_len = Some(chunk_len_parsed);
             },
