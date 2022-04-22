@@ -3,7 +3,8 @@ use aes_gcm::aead::NewAead;
 use anyhow::{anyhow, Result};
 use base64;
 use generic_array::typenum::{U12, U16};
-use rand::{RngCore, OsRng};
+use rand::RngCore;
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::{fs, thread};
 use std::thread::JoinHandle;
@@ -173,10 +174,9 @@ pub struct Chunk {
 impl Chunk {
 
     pub fn random() -> Self {
-        let mut rng = OsRng::new().unwrap();
-        let mut random = || {
+        let random = || {
             let mut bytes = [0u8; 16];
-            rng.fill_bytes(&mut bytes);
+            OsRng.fill_bytes(&mut bytes);
             bytes
         };
         let id = {
